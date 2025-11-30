@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Api\UjianApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\KategoriUmkmController;
@@ -399,5 +400,15 @@ Route::get('/make-symlink', function () {
     }
 });
 
+
+// API Routes - No middleware for k6 load testing
+Route::prefix('api')->group(function () {
+    Route::get('/ujian', [UjianApiController::class, 'index'])->name('api.ujian.index');
+    Route::get('/ujian/{id}/questions', [UjianApiController::class, 'getQuestions'])->name('api.ujian.questions');
+    Route::get('/ujian/random/question', [UjianApiController::class, 'getRandomQuestion'])->name('api.ujian.random');
+    Route::get('/ujian/stats', [UjianApiController::class, 'getStats'])->name('api.ujian.stats');
+    Route::get('/ujian/health', [UjianApiController::class, 'health'])->name('api.ujian.health');
+    Route::get('/ujian/bulk/questions', [UjianApiController::class, 'getBulkQuestions'])->name('api.ujian.bulk.questions');
+});
 
 Route::get('/api/ujian', [UjianController::class, 'getUjianApi'])->name('ujian.getUjianApi');

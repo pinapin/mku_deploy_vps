@@ -7,8 +7,8 @@ let errorRate = new Rate("errors");
 export let options = {
     stages: [
         { duration: "5s", target: 20 }, // Warm up
-        { duration: "30s", target: 1500 }, // Naik ke 500 users dalam 10 detik
-        { duration: "30s", target: 1500 }, // Pertahankan 500 users selama 10 detik
+        { duration: "30s", target: 1000 }, // Naik ke 300 users dalam 10 detik
+        { duration: "30s", target: 1000 }, // Pertahan3an 500 users selama 10 detik
         { duration: "5s", target: 0 }, // Cool down
     ],
     thresholds: {
@@ -19,7 +19,7 @@ export let options = {
 };
 
 export default function () {
-    let url = "http://34.101.43.69/";
+    let url = "http://34.128.94.103/api/ujian/random/question";
 
     let params = {
         headers: {
