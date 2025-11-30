@@ -41,22 +41,7 @@ services:
     volumes:
       - ./:/var/www/html
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
-      - ./docker/php/php-fpm.conf:/usr/local/etc/php-fpm.d/www.conf
-    environment:
-      - APP_ENV=${APP_ENV:-production}
-      - APP_DEBUG=${APP_DEBUG:-false}
-      - DB_HOST=db
-      - DB_PORT=3306
-      - DB_DATABASE=${DB_DATABASE}
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      - db
-      - redis
-    networks:
-      - laravel
+      - ./docker/php/www.conf:/usr/local/etc/php-fpm.d/www.conf
 
   # MySQL Database
   db:
