@@ -109,7 +109,7 @@ services:
     container_name: laravel_queue
     restart: unless-stopped
     working_dir: /var/www/html
-    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+    command: php artisan queue:work redis --queue=ujian_scoring,default --sleep=3 --tries=3 --max-time=3600
     volumes:
       - ./:/var/www/html
     depends_on:
@@ -133,6 +133,7 @@ services:
     depends_on:
       - app
       - db
+      - redis
     networks:
       - laravel
 
