@@ -49,10 +49,16 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Create system user
 RUN addgroup -g ${GROUP_ID} laravel \
-    && adduser -D -u ${USER_ID} -G laravel laravel
+    && adduser -D -u ${USER_ID} -G laravel laravel \
+    && mkdir -p /var/log/php-fpm \
+    && chown -R laravel:laravel /var/log/php-fpm
 
 # Copy application files
 COPY --chown=laravel:laravel . /var/www/html
+
+# Copy PHP-FPM configs
+COPY docker/php/php-fpm-global.conf /usr/local/etc/php-fpm.conf
+COPY docker/php/php-fpm.conf /usr/local/etc/php-fpm.d/www.conf
 
 # Install composer dependencies
 RUN composer install --optimize-autoloader --no-dev --no-interaction
