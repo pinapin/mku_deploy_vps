@@ -1,0 +1,56 @@
+<?php
+
+// Cara mengaktifkan maintenance mode:
+
+// Metode 1: Via Artisan Command
+// php artisan down --message="Server sedang upgrade otak! Kembali dalam 30 menit" --retry=60
+
+// Metode 2: Via File .htaccess
+// Tambahkan baris berikut di file .htaccess di root directory:
+
+/*
+# Maintenance Mode
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/maintenance\.blade\.php$
+    RewriteCond %{REQUEST_URI} !\.(css|js|png|jpg|jpeg|gif|ico|svg)$
+    RewriteRule .* /resources/views/errors/maintenance.blade.php [L]
+</IfModule>
+
+# Atau redirect ke halaman maintenance
+ErrorDocument 503 /maintenance
+
+# Atau menampilkan halaman maintenance langsung
+<Files "*">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+<Files "maintenance.blade.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+*/
+
+// Metode 3: Via Laravel Built-in Maintenance Mode
+// Buat file storage/framework/down
+echo "Maintenance mode activated! System will be back soon.";
+
+// Metode 4: Custom Middleware
+// Buat middleware CheckMaintenance
+// Daftarkan di web.php
+
+// Cara mengakses halaman maintenance:
+// 1. Direct access: http://yourdomain.com/index.php/maintenance
+// 2. Atau gunakan route khusus di web.php:
+
+// Route::get('/maintenance', function() {
+//     return view('errors.maintenance');
+// })->name('maintenance');
+
+// Cara menonaktifkan maintenance mode:
+// php artisan up
+
+// Atau hapus file storage/framework/down
+
+?>

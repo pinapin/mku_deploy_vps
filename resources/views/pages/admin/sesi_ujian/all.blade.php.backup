@@ -1,0 +1,197 @@
+@extends('layouts.master')
+
+@section('title', 'Semua Ujian')
+
+@section('content')
+    <section class="content">
+        <div class="container-fluid">
+            @if(session('success'))
+                <div class="alert alert-success alert-dismissible">
+                    <button type="button" class="close" data-dismiss="alert">&times;</button>
+                    {{ session('success') }}
+                </div>
+            @endif
+
+            @if(session('error'))
+                <div class="alert alert-danger alert-dismissible">
+                    <button type="button" class="close" data-dismiss="alert">&times;</button>
+                    {{ session('error') }}
+                </div>
+            @endif
+
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Daftar Ujian</h3>
+                            <div class="card-tools">
+                                <a href="{{ route('master.ujian.index') }}" class="btn btn-default btn-sm">
+                                    <i class="fas fa-arrow-left"></i> Kembali ke Kelola Ujian
+                                </a>
+                                <a href="{{ route('master.sesi_ujian.index') }}" class="btn btn-info btn-sm">
+                                    <i class="fas fa-list"></i> Lihat Semua Sesi
+                                </a>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th width="5%">No</th>
+                                            <th>Nama Ujian</th>
+                                            <th>Durasi</th>
+                                            <th>Jumlah Soal</th>
+                                            <th>Status</th>
+                                            <th>Total Sesi</th>
+                                            <th>Selesai</th>
+                                            <th>Berlangsung</th>
+                                            <th width="15%">Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse($ujians as $index => $ujian)
+                                            <tr>
+                                                <td>{{ $index + 1 }}</td>
+                                                <td>
+                                                    <strong>{{ $ujian->nama_ujian }}</strong>
+                                                    @if($ujian->deskripsi)
+                                                        <br><small class="text-muted">{{ Str::limit($ujian->deskripsi, 50) }}</small>
+                                                    @endif
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-info">
+                                                        {{ $ujian->durasi_menit }} menit
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge badge-primary">
+                                                        {{ $ujian->soal->count() }} soal
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    @if($ujian->is_active)
+                                                        <span class="badge badge-success">
+                                                            <i class="fas fa-check"></i> Aktif
+                                                        </span>
+                                                    @else
+                                                        <span class="badge badge-danger">
+                                                            <i class="fas fa-times"></i> Tidak Aktif
+                                                        </span>
+                                                    @endif
+                                                </td>
+                                                <td>
+                                                    @php
+                                                        $totalSesi = App\Models\SesiUjian::where('id_ujian', $ujian->id)->count();
+                                                    @endphp
+                                                    <span class="badge badge-secondary">{{ $totalSesi }}</span>
+                                                </td>
+                                                <td>
+                                                    @php
+                                                        $selesaiSesi = App\Models\SesiUjian::where('id_ujian', $ujian->id)
+                                                            ->where('status', 'selesai')->count();
+                                                    @endphp
+                                                    <span class="badge badge-success">{{ $selesaiSesi }}</span>
+                                                </td>
+                                                <td>
+                                                    @php
+                                                        $berlangsungSesi = App\Models\SesiUjian::where('id_ujian', $ujian->id)
+                                                            ->where('status', 'berlangsung')->count();
+                                                    @endphp
+                                                    <span class="badge badge-warning">{{ $berlangsungSesi }}</span>
+                                                </td>
+                                                <td>
+                                                    <div class="btn-group-vertical btn-group-sm">
+                                                        <a href="{{ route('master.sesi_ujian.index_by_ujian', $ujian->id) }}" class="btn btn-primary btn-sm" title="Lihat Sesi Ujian">
+                                                            <i class="fas fa-eye"></i> Lihat Sesi Ujian
+                                                        </a>
+                                                        <a href="{{ route('master.sesi_ujian.statistics', $ujian->id) }}" class="btn btn-info btn-sm" title="Lihat Statistik">
+                                                            <i class="fas fa-chart-bar"></i> Statistik
+                                                        </a>
+                                                        @if($totalSesi > 0)
+                                                            <a href="{{ route('master.sesi_ujian.exportResults', $ujian->id) }}" class="btn btn-success btn-sm" title="Download Hasil">
+                                                                <i class="fas fa-download"></i> Download
+                                                            </a>
+                                                        @endif
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        @empty
+                                            <tr>
+                                                <td colspan="9" class="text-center">Tidak ada data ujian</td>
+                                            </tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics Overview -->
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title">Statistik Keseluruhan</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="info-box">
+                                        <span class="info-box-icon bg-info"><i class="fas fa-clipboard-list"></i></span>
+                                        <div class="info-box-content">
+                                            <span class="info-box-text">Total Ujian</span>
+                                            <span class="info-box-number">{{ $ujians->count() }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="info-box">
+                                        <span class="info-box-icon bg-success"><i class="fas fa-check-circle"></i></span>
+                                        <div class="info-box-content">
+                                            <span class="info-box-text">Ujian Aktif</span>
+                                            <span class="info-box-number">{{ $ujians->where('is_active', 1)->count() }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="info-box">
+                                        <span class="info-box-icon bg-primary"><i class="fas fa-question-circle"></i></span>
+                                        <div class="info-box-content">
+                                            <span class="info-box-text">Total Soal</span>
+                                            <span class="info-box-number">
+                                                @php
+                                                    $totalSoal = 0;
+                                                    foreach($ujians as $ujian) {
+                                                        $totalSoal += $ujian->soal->count();
+                                                    }
+                                                @endphp
+                                                {{ $totalSoal }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="info-box">
+                                        <span class="info-box-icon bg-warning"><i class="fas fa-users"></i></span>
+                                        <div class="info-box-content">
+                                            <span class="info-box-text">Total Sesi Ujian</span>
+                                            <span class="info-box-number">
+                                                @php
+                                                    $totalSemuaSesi = App\Models\SesiUjian::count();
+                                                @endphp
+                                                {{ $totalSemuaSesi }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+@endsection
