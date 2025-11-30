@@ -19,7 +19,7 @@ return new class extends Migration
             $table->timestamp('waktu_mulai');
             $table->timestamp('waktu_selesai')->nullable();
             $table->integer('skor_akhir')->nullable();
-            $table->enum('status', ['berlangsung', 'selesai', 'timeout'])->default('berlangsung');
+            $table->enum('status', ['berlangsung', 'selesai', 'scoring', 'timeout'])->default('berlangsung');
             $table->timestamps();
 
             $table->foreign('nim')->references('nim')->on('mahasiswas')

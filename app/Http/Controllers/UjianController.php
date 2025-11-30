@@ -8,9 +8,12 @@ use App\Models\Soal;
 use App\Models\Pilihan;
 use App\Models\SesiUjian;
 use App\Models\JawabanMahasiswa;
+use App\Jobs\ScoreExamJob;
 use App\Services\UrlEncryptionService;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class UjianController extends Controller
 {
@@ -19,6 +22,113 @@ class UjianController extends Controller
     public function __construct()
     {
         $this->nim = Session::get('kode');
+    }
+
+    /**
+     * Get cached exam questions with options
+     */
+    private function getCachedExamQuestions($ujianId)
+    {
+        $cacheKey = "ujian_questions_{$ujianId}";
+
+        return Cache::remember($cacheKey, now()->addHours(2), function () use ($ujianId) {
+            return Soal::with(['pilihan' => function ($query) {
+                $query->orderBy('huruf_pilihan');
+            }])
+            ->where('id_ujian', $ujianId)
+            ->get();
+        });
+    }
+
+    /**
+     * Clear cached exam questions (useful when questions are updated)
+     */
+    private function clearCachedExamQuestions($ujianId)
+    {
+        $cacheKey = "ujian_questions_{$ujianId}";
+        Cache::forget($cacheKey);
+    }
+
+    /**
+     * Store batch answers
+     */
+    public function submitBatchAnswers(Request $request)
+    {
+        $request->validate([
+            'answers' => 'required|array',
+            'answers.*.id_soal' => 'required|exists:soal,id',
+            'answers.*.id_pilihan' => 'required|exists:pilihan,id'
+        ]);
+
+        $nim = $this->nim;
+
+        if (!$nim) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Session anda telah habis'
+            ], 401);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $answers = $request->answers;
+            $batchData = [];
+
+            // Get the first answer to determine the exam session
+            $firstAnswer = $answers[0];
+            $soal = Soal::findOrFail($firstAnswer['id_soal']);
+            $sesiUjian = SesiUjian::where('id_ujian', $soal->id_ujian)
+                ->where('nim', $nim)
+                ->where('status', 'berlangsung')
+                ->firstOrFail();
+
+            // Prepare batch data
+            foreach ($answers as $answer) {
+                // Validate that all answers belong to the same exam
+                $answerSoal = Soal::findOrFail($answer['id_soal']);
+                if ($answerSoal->id_ujian !== $soal->id_ujian) {
+                    throw new \Exception('Jawaban dari ujian yang berbeda tidak diperbolehkan');
+                }
+
+                $pilihan = Pilihan::where('id_soal', $answer['id_soal'])
+                    ->where('id', $answer['id_pilihan'])
+                    ->firstOrFail();
+
+                $batchData[] = [
+                    'id_sesi' => $sesiUjian->id,
+                    'id_soal' => $answer['id_soal'],
+                    'id_pilihan_dipilih' => $answer['id_pilihan'],
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
+
+            // Delete existing answers for these questions and insert new ones
+            $soalIds = array_column($batchData, 'id_soal');
+            JawabanMahasiswa::where('id_sesi', $sesiUjian->id)
+                ->whereIn('id_soal', $soalIds)
+                ->delete();
+
+            // Insert batch answers
+            JawabanMahasiswa::insert($batchData);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => count($batchData) . ' jawaban berhasil disimpan'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Batch answer submission failed: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menyimpan jawaban: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function index()
@@ -30,10 +140,14 @@ class UjianController extends Controller
             return redirect()->route('login')->with('error', 'Session anda telah habis, silakan login kembali');
         }
 
-        // Get all active exams with soal relationship
-        $allUjians = Ujian::where('is_active', true)
-            ->with('soal')
-            ->get();
+        // Get all active exams
+        $allUjians = Ujian::where('is_active', true)->get();
+
+        // Load cached questions for each exam
+        $allUjians->each(function ($ujian) {
+            $questions = $this->getCachedExamQuestions($ujian->id);
+            $ujian->setRelation('soal', $questions);
+        });
 
         // Get user's exam sessions
         $userExamSessions = SesiUjian::where('nim', $nim)
@@ -203,21 +317,22 @@ class UjianController extends Controller
         }
 
         // Find the session and validate user ownership
-        $sesiUjian = SesiUjian::with(['ujian.soal.pilihan' => function ($query) {
-            $query->orderBy('huruf_pilihan');
-        }])
+        $sesiUjian = SesiUjian::with(['ujian'])
             ->where('id', $id_sesi)
             ->where('nim', $nim)
             ->firstOrFail();
 
         $ujian = $sesiUjian->ujian;
 
+        // Get cached questions with options
+        $questions = $this->getCachedExamQuestions($ujian->id);
+
         if (!$ujian->is_active) {
             return redirect()->route('ujian.index')
                 ->with('error', 'Ujian tidak aktif');
         }
 
-        if ($ujian->soal->count() === 0) {
+        if ($questions->count() === 0) {
             return redirect()->route('ujian.index')
                 ->with('error', 'Ujian belum memiliki soal');
         }
@@ -247,7 +362,8 @@ class UjianController extends Controller
             'ujian',
             'sesiUjian',
             'remainingTime',
-            'jawabanMahasiswa'
+            'jawabanMahasiswa',
+            'questions'
         ));
     }
 
@@ -343,25 +459,14 @@ class UjianController extends Controller
             return;
         }
 
-        // Load relationships properly
-        $sesiUjian->load(['ujian.soal']);
-
-        $totalQuestions = $sesiUjian->ujian ? $sesiUjian->ujian->soal->count() : 0;
-        $correctAnswers = JawabanMahasiswa::where('id_sesi', $sesiUjian->id)
-            ->with('pilihanDipilih')
-            ->get()
-            ->filter(function ($jawaban) {
-                return $jawaban->isBenar();
-            })
-            ->count();
-
-        $score = $totalQuestions > 0 ? round(($correctAnswers / $totalQuestions) * 100) : 0;
-
+        // Set finish time immediately, but let the job handle scoring
         $sesiUjian->update([
-            'waktu_selesai' => now(),
-            'skor_akhir' => $score,
-            'status' => 'selesai'
+            'waktu_selesai' => now()
         ]);
+
+        // Dispatch scoring job to background queue
+        ScoreExamJob::dispatch($sesiUjian)
+            ->onQueue('ujian_scoring');
     }
 
     private function completeExam(SesiUjian $sesiUjian)
@@ -370,31 +475,20 @@ class UjianController extends Controller
             return redirect()->route('ujian.result', UrlEncryptionService::encryptId($sesiUjian->id));
         }
 
-        // Load relationships properly
-        $sesiUjian->load(['ujian.soal']);
-
-        $totalQuestions = $sesiUjian->ujian ? $sesiUjian->ujian->soal->count() : 0;
-        $correctAnswers = JawabanMahasiswa::where('id_sesi', $sesiUjian->id)
-            ->with('pilihanDipilih')
-            ->get()
-            ->filter(function ($jawaban) {
-                return $jawaban->isBenar();
-            })
-            ->count();
-
-        $score = $totalQuestions > 0 ? round(($correctAnswers / $totalQuestions) * 100) : 0;
-
+        // Set finish time immediately, but let the job handle scoring
         $sesiUjian->update([
-            'waktu_selesai' => now(),
-            'skor_akhir' => $score,
-            'status' => 'selesai'
+            'waktu_selesai' => now()
         ]);
+
+        // Dispatch scoring job to background queue
+        ScoreExamJob::dispatch($sesiUjian)
+            ->onQueue('ujian_scoring');
 
         // Return JSON response for AJAX request
         return response()->json([
             'success' => true,
-            'message' => 'Ujian berhasil diselesaikan!',
-            'score' => $score
+            'message' => 'Ujian berhasil diselesaikan! Nilai sedang diproses dan akan segera tersedia.',
+            'scoring_queued' => true
         ]);
     }
 

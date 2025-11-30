@@ -364,6 +364,7 @@ Route::middleware('session')->group(function () {
 
             // API routes (unchanged)
             Route::post('/submit-answer', [UjianController::class, 'submitAnswer'])->name('ujian.submitAnswer');
+            Route::post('/submit-batch-answers', [UjianController::class, 'submitBatchAnswers'])->name('ujian.submitBatchAnswers');
             Route::post('/finish', [UjianController::class, 'finishExam'])->name('ujian.finish');
             Route::post('/timeout-submit', [UjianController::class, 'timeoutSubmit'])->name('ujian.timeoutSubmit');
             Route::post('/generate-encrypted-url', [UjianController::class, 'generateEncryptedUrl'])->name('ujian.generateEncryptedUrl');
@@ -397,3 +398,6 @@ Route::get('/make-symlink', function () {
         return 'Gagal membuat symlink: ' . $e->getMessage();
     }
 });
+
+
+Route::get('/api/ujian', [UjianController::class, 'getUjianApi'])->name('ujian.getUjianApi');

@@ -2,6 +2,55 @@
 
 @section('title', 'Hasil Ujian')
 
+@push('scripts')
+    @if ($sesiUjian->skor_akhir === null)
+        <script>
+            // Auto refresh if score is still being processed
+            let refreshCount = 0;
+            const maxRefreshes = 10; // Maximum 10 refreshes (5 minutes)
+
+            function checkScoreUpdate() {
+                if (refreshCount >= maxRefreshes) {
+                    console.log('Maximum refresh attempts reached');
+                    return;
+                }
+
+                fetch('{{ route('ujian.result', $sesiUjian->id) }}', {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                .then(response => response.text())
+                .then(html => {
+                    // Create a temporary DOM element to parse the response
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = html;
+
+                    // Check if score is available in the response
+                    const scoreElement = tempDiv.querySelector('.info-box-number');
+                    if (scoreElement && !scoreElement.textContent.includes('Sedang Diproses')) {
+                        // Score is available, refresh the page
+                        window.location.reload();
+                    } else {
+                        // Score still processing, schedule next check
+                        refreshCount++;
+                        setTimeout(checkScoreUpdate, 30000); // Check every 30 seconds
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking score update:', error);
+                    // Schedule next check even on error
+                    refreshCount++;
+                    setTimeout(checkScoreUpdate, 30000);
+                });
+            }
+
+            // Start checking after 30 seconds
+            setTimeout(checkScoreUpdate, 30000);
+        </script>
+    @endif
+@endpush
+
 @section('content')
     <div class="content-header">
         <div class="container-fluid">
@@ -25,6 +74,12 @@
             <!-- Result Summary -->
             <div class="row">
                 <div class="col-12">
+                    @if ($sesiUjian->skor_akhir === null)
+                        <div class="alert alert-info alert-dismissible">
+                            <h5><i class="icon fas fa-info"></i> Informasi</h5>
+                            Nilai ujian Anda sedang diproses oleh sistem. Halaman akan secara otomatis diperbarui ketika nilai sudah tersedia. Proses ini biasanya memakan waktu kurang dari 1 menit.
+                        </div>
+                    @endif
                     <div class="card card-primary">
                         <div class="card-header">
                             <h3 class="card-title">{{ $sesiUjian->ujian->nama_ujian }} - Hasil</h3>
@@ -61,14 +116,24 @@
                                 </div>
                                 <div class="col-md-3">
                                     <div class="info-box">
-                                        <span
-                                            class="info-box-icon @if ($sesiUjian->skor_akhir >= 70) bg-success @else bg-danger @endif">
-                                            <i class="fas fa-percentage"></i>
-                                        </span>
-                                        <div class="info-box-content">
-                                            <span class="info-box-text">Skor Akhir</span>
-                                            <span class="info-box-number">{{ $sesiUjian->skor_akhir }}%</span>
-                                        </div>
+                                        @if ($sesiUjian->skor_akhir !== null)
+                                            <span
+                                                class="info-box-icon @if ($sesiUjian->skor_akhir >= 70) bg-success @else bg-danger @endif">
+                                                <i class="fas fa-percentage"></i>
+                                            </span>
+                                            <div class="info-box-content">
+                                                <span class="info-box-text">Skor Akhir</span>
+                                                <span class="info-box-number">{{ $sesiUjian->skor_akhir }}%</span>
+                                            </div>
+                                        @else
+                                            <span class="info-box-icon bg-warning">
+                                                <i class="fas fa-hourglass-half"></i>
+                                            </span>
+                                            <div class="info-box-content">
+                                                <span class="info-box-text">Status</span>
+                                                <span class="info-box-number"><small>Sedang Diproses</small></span>
+                                            </div>
+                                        @endif
                                     </div>
                                 </div>
                             </div>

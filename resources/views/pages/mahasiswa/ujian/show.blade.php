@@ -425,12 +425,11 @@
                             {{ $ujian->nama_ujian }}
                         </h3>
                         <small class="text-muted">Durasi: {{ $ujian->durasi_menit }} menit | Total Soal:
-                            {{ $ujian->soal->count() }}</small>
+                            {{ $questions->count() }}</small>
                     </div>
                     <div class="col-md-4 text-right">
                         <div class="question-counter">
-                            <span id="currentQuestion">1</span> / <span
-                                id="totalQuestions">{{ $ujian->soal->count() }}</span>
+                            <span id="currentQuestion">1</span> / <span id="totalQuestions">{{ $questions->count() }}</span>
                             <small class="text-muted d-block mt-1">
                                 <span id="answeredCount">0</span> dijawab
                             </small>
@@ -452,7 +451,7 @@
 
                 <div class="question-counter d-none d-md-block">
                     Pertanyaan <span id="currentQuestionNav">1</span> dari <span
-                        id="totalQuestionsNav">{{ $ujian->soal->count() }}</span>
+                        id="totalQuestionsNav">{{ $questions->count() }}</span>
                 </div>
 
                 <button type="button" class="finish-btn" id="finishBtn" data-allowed>
@@ -469,8 +468,8 @@
 
 @push('scripts')
     <script>
-        // Data from Laravel - Shuffle questions for this student
-        const originalQuestions = @json($ujian->soal->sortBy('nomor_soal')->values());
+        // Data from Laravel - Use cached questions
+        const originalQuestions = @json($questions->sortBy('nomor_soal')->values());
         const jawabanSiswa = @json($jawabanMahasiswa);
         const sesiId = {{ $sesiUjian->id }};
 
@@ -501,15 +500,284 @@
         let currentQuestionIndex = 0;
         let timerInterval;
         let startTime = Date.now(); // Track exam start time
+        let pendingAnswers = {}; // Store answers for batch submission
+        let batchSubmissionTimer;
+
+        // Local storage key for this exam session
+        const storageKey = `exam_answers_${sesiId}`;
+
+        // Local Storage Functions
+        let lastSaveData = null; // Cache to prevent unnecessary writes
+        let saveAttempts = 0;
+        const maxSaveAttempts = 3; // Prevent infinite loops
+
+        function saveAnswersToLocalStorage() {
+            try {
+                // Prevent excessive saves - only save if data actually changed
+                const currentSaveData = {
+                    answers: jawabanSiswa,
+                    pendingAnswers: pendingAnswers,
+                    currentQuestionIndex: currentQuestionIndex
+                };
+
+                // Quick check if data actually changed (performance optimization)
+                if (lastSaveData && JSON.stringify(currentSaveData) === JSON.stringify(lastSaveData)) {
+                    return; // Skip saving if data is identical
+                }
+
+                const storageData = {
+                    ...currentSaveData,
+                    timestamp: Date.now()
+                };
+
+                localStorage.setItem(storageKey, JSON.stringify(storageData));
+                lastSaveData = currentSaveData; // Update cache
+                saveAttempts = 0; // Reset counter on success
+
+            } catch (error) {
+                saveAttempts++;
+                console.error('Error saving to localStorage (attempt ' + saveAttempts + '):', error);
+
+                // If we hit storage quota or other errors, try to clear old data
+                if (saveAttempts >= maxSaveAttempts) {
+                    try {
+                        // Emergency: clear localStorage to prevent crashes
+                        localStorage.removeItem(storageKey);
+                        showNotification('⚠️ Local storage penuh, data lama dibersihkan', 'warning');
+                    } catch (clearError) {
+                        console.error('Failed to clear localStorage:', clearError);
+                    }
+                }
+            }
+        }
+
+        function loadAnswersFromLocalStorage() {
+            try {
+                const storedData = localStorage.getItem(storageKey);
+                if (storedData) {
+                    const data = JSON.parse(storedData);
+
+                    // Check if data is not too old (within current exam session)
+                    const maxAge = 2 * 60 * 60 * 1000; // 2 hours
+                    if (Date.now() - data.timestamp < maxAge) {
+                        // Create a Set of valid question IDs for this exam (performance optimization)
+                        const validQuestionIds = new Set();
+                        for (let j = 0; j < questions.length; j++) {
+                            validQuestionIds.add(String(questions[j].id));
+                        }
+
+                        // Load pending answers first (for batch submission) with validation
+                        const storedPendingAnswers = data.pendingAnswers || {};
+                        const pendingKeys = Object.keys(storedPendingAnswers);
+                        let validPendingCount = 0;
+                        let invalidPendingCount = 0;
+
+                        for (let k = 0; k < pendingKeys.length; k++) {
+                            const soalId = pendingKeys[k];
+                            const pendingAnswer = storedPendingAnswers[soalId];
+
+                            // Validate that this pending answer belongs to the current exam
+                            if (validQuestionIds.has(soalId) && pendingAnswer && pendingAnswer.id_pilihan) {
+                                pendingAnswers[soalId] = pendingAnswer;
+                                validPendingCount++;
+                            } else {
+                                invalidPendingCount++;
+                            }
+                        }
+
+                        // Log invalid pending answers for debugging
+                        if (invalidPendingCount > 0) {
+                            console.log(
+                                `Skipped ${invalidPendingCount} invalid pending answers from different exam session`);
+                        }
+
+                        // Merge stored answers with server answers efficiently
+                        const storedAnswers = data.answers || {};
+                        const storedAnswerKeys = Object.keys(storedAnswers);
+                        let restoredCount = 0;
+                        let existingCount = 0;
+                        let invalidCount = 0;
+
+                        // Early cleanup: If too many invalid answers (>90%), clear all data
+                        if (storedAnswerKeys.length > questions.length * 2) {
+                            console.log(
+                                `Too many stored answers (${storedAnswerKeys.length}) for ${questions.length} questions. Clearing all data.`
+                                );
+                            localStorage.removeItem(storageKey);
+                            return false;
+                        }
+
+                        // Count restored answers with validation
+                        for (let i = 0; i < storedAnswerKeys.length; i++) {
+                            const soalId = storedAnswerKeys[i];
+
+                            // Validate that this answer belongs to the current exam
+                            if (!validQuestionIds.has(soalId)) {
+                                invalidCount++;
+                                continue; // Skip invalid answers
+                            }
+
+                            // Check if answer has valid value
+                            if (!storedAnswers[soalId] || storedAnswers[soalId] === '' || storedAnswers[soalId] ===
+                                'null' || storedAnswers[soalId] === null) {
+                                invalidCount++;
+                                continue; // Skip invalid answer values
+                            }
+
+                            if (!jawabanSiswa[soalId]) {
+                                // Only add stored answer if server doesn't have it
+                                jawabanSiswa[soalId] = storedAnswers[soalId];
+                                restoredCount++;
+                            } else {
+                                existingCount++;
+                            }
+                        }
+
+                        // Log basic answers for debugging
+                        console.log(`Debug - Total stored answers: ${storedAnswerKeys.length}`);
+                        console.log(`Debug - Valid question IDs: ${validQuestionIds.size}`);
+                        console.log(
+                            `Debug - Restored: ${restoredCount}, Existing: ${existingCount}, Invalid: ${invalidCount}`);
+
+                        if (invalidCount > 0) {
+                            console.log(`Skipped ${invalidCount} invalid answers from different exam session`);
+                        }
+
+                        // Update currentQuestionIndex if stored (with validation)
+                        if (data.currentQuestionIndex !== undefined &&
+                            data.currentQuestionIndex >= 0 &&
+                            data.currentQuestionIndex < questions.length) {
+                            currentQuestionIndex = data.currentQuestionIndex;
+                        }
+
+                        // Calculate total answered questions correctly
+                        let totalAnswered = 0;
+
+                        // Count unique answered questions from server answers
+                        Object.keys(jawabanSiswa).forEach(soalId => {
+                            if (jawabanSiswa[soalId]) {
+                                totalAnswered++;
+                            }
+                        });
+
+                        // Count additional pending answers not already counted
+                        Object.keys(pendingAnswers).forEach(soalId => {
+                            if (pendingAnswers[soalId] && pendingAnswers[soalId].id_pilihan && !jawabanSiswa[
+                                soalId]) {
+                                totalAnswered++;
+                            }
+                        });
+
+                        // Log total answered calculation
+                        console.log(`Debug - Total answered: ${totalAnswered}, Questions length: ${questions.length}`);
+
+                        // Show comprehensive notification with accurate counts
+                        // Only show restoredCount if it's meaningful and reasonable
+                        if (restoredCount > 0 && restoredCount <= questions.length && restoredCount !== totalAnswered) {
+                            showNotification(`📋 ${restoredCount} jawaban dipulihkan • ${totalAnswered} total terjawab`,
+                                'info');
+                        } else if (totalAnswered > 0) {
+                            // Show total answered count for all other cases
+                            showNotification(`📋 ${totalAnswered} jawaban tersedia`, 'info');
+                        } else {
+                            showNotification(`📋 Tidak ada jawaban yang tersimpan`, 'info');
+                        }
+
+                        // Clean up localStorage by removing invalid entries to prevent future issues
+                        if (invalidCount > 0 || invalidPendingCount > 0) {
+                            // Create cleaned data object with only valid answers
+                            const cleanedData = {
+                                ...data,
+                                answers: {},
+                                pendingAnswers: {},
+                                timestamp: Date.now()
+                            };
+
+                            // Only keep valid answers
+                            Object.keys(storedAnswers).forEach(soalId => {
+                                if (validQuestionIds.has(soalId)) {
+                                    cleanedData.answers[soalId] = storedAnswers[soalId];
+                                }
+                            });
+
+                            // Only keep valid pending answers
+                            Object.keys(storedPendingAnswers).forEach(soalId => {
+                                if (validQuestionIds.has(soalId) && storedPendingAnswers[soalId] &&
+                                    storedPendingAnswers[soalId].id_pilihan) {
+                                    cleanedData.pendingAnswers[soalId] = storedPendingAnswers[soalId];
+                                }
+                            });
+
+                            // Save cleaned data back to localStorage
+                            try {
+                                localStorage.setItem(storageKey, JSON.stringify(cleanedData));
+                                console.log(
+                                    `Data cleanup: ${invalidCount} invalid answers, ${invalidPendingCount} invalid pending answers removed and cleaned`
+                                    );
+                            } catch (cleanupError) {
+                                console.error('Failed to clean localStorage data:', cleanupError);
+                            }
+                        }
+
+                        return true;
+                    } else {
+                        // Clear old data
+                        localStorage.removeItem(storageKey);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading from localStorage:', error);
+                localStorage.removeItem(storageKey); // Clear corrupted data
+            }
+            return false;
+        }
+
+        function clearAnswersFromLocalStorage() {
+            try {
+                localStorage.removeItem(storageKey);
+                // console.log('🗑️ Cleared localStorage');
+            } catch (error) {
+                console.error('Error clearing localStorage:', error);
+            }
+        }
 
         // Initialize exam
         document.addEventListener('DOMContentLoaded', function() {
-            generateMinimapHTML(); // Generate minimap dynamically
+            loadAnswersFromLocalStorage(); // Load saved answers first
+            generateMinimapHTML(); // Generate minimap after loading localStorage data
             loadQuestion(currentQuestionIndex);
             startTimer();
             attachEventListeners();
             updateProgressBar();
             updateAnsweredProgress(); // Initialize with existing answers
+
+            // Adaptive save interval - save only when needed to improve performance
+            let saveInterval = setInterval(() => {
+                saveAnswersToLocalStorage();
+            }, 45000); // Increased to 45 seconds for better performance
+
+            // Clear interval when exam is finished to prevent memory leaks
+            window.addEventListener('beforeunload', () => {
+                if (saveInterval) {
+                    clearInterval(saveInterval);
+                }
+                // Final save before unload
+                saveAnswersToLocalStorage();
+            });
+
+            // Listen for online/offline events
+            window.addEventListener('online', function() {
+                showNotification('🌐 Koneksi pulih. Mengirim jawaban yang tersimpan...', 'success');
+                // Try to submit any pending answers immediately
+                if (Object.keys(pendingAnswers).length > 0) {
+                    submitBatchAnswers();
+                }
+            });
+
+            window.addEventListener('offline', function() {
+                showNotification('📵 Koneksi terputus. Jawaban akan tetap disimpan di local storage.',
+                    'warning');
+            });
         });
 
         function updateProgressBar() {
@@ -521,26 +789,54 @@
             document.getElementById('currentQuestionNav').textContent = currentQuestionIndex + 1;
         }
 
+        // Cache DOM elements to prevent repeated queries (performance optimization)
+        let cachedAnsweredCountElement = null;
+        let cachedProgressBarElement = null;
+
         function updateAnsweredProgress() {
-            // Calculate progress based on answered questions only
-            const answeredCount = Object.keys(jawabanSiswa).length;
+            // Calculate total answered questions using the same logic as notification
+            let answeredCount = 0;
+
+            // Count server answers
+            Object.keys(jawabanSiswa).forEach(soalId => {
+                if (jawabanSiswa[soalId]) {
+                    answeredCount++;
+                }
+            });
+
+            // Count additional pending answers not already counted
+            Object.keys(pendingAnswers).forEach(soalId => {
+                if (pendingAnswers[soalId] && pendingAnswers[soalId].id_pilihan && !jawabanSiswa[soalId]) {
+                    answeredCount++;
+                }
+            });
+
             const totalCount = questions.length;
             const progress = (answeredCount / totalCount) * 100;
 
-            document.getElementById('progressBar').style.width = progress + '%';
-
-            // Update answered count display
-            const answeredCountElement = document.getElementById('answeredCount');
-            if (answeredCountElement) {
-                answeredCountElement.textContent = answeredCount;
+            // Use cached DOM elements for better performance
+            if (!cachedProgressBarElement) {
+                cachedProgressBarElement = document.getElementById('progressBar');
+            }
+            if (cachedProgressBarElement) {
+                cachedProgressBarElement.style.width = progress + '%';
             }
 
-            // Update progress bar color based on completion
-            const progressBar = document.getElementById('progressBar');
-            if (answeredCount === totalCount) {
-                progressBar.style.background = 'linear-gradient(90deg, #28a745 0%, #20c997 100%)';
-            } else {
-                progressBar.style.background = 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)';
+            // Update answered count display
+            if (!cachedAnsweredCountElement) {
+                cachedAnsweredCountElement = document.getElementById('answeredCount');
+            }
+            if (cachedAnsweredCountElement) {
+                cachedAnsweredCountElement.textContent = answeredCount;
+            }
+
+            // Update progress bar color based on completion (using cached element)
+            if (cachedProgressBarElement) {
+                if (answeredCount === totalCount) {
+                    cachedProgressBarElement.style.background = 'linear-gradient(90deg, #28a745 0%, #20c997 100%)';
+                } else {
+                    cachedProgressBarElement.style.background = 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)';
+                }
             }
         }
 
@@ -549,8 +845,13 @@
             let minimapHTML = '';
 
             questions.forEach((question, displayIndex) => {
-                const isAnswered = jawabanSiswa[question.id] ? true : false;
-                const isActive = displayIndex === 0; // First question is active initially
+                // Check if question is answered from either server answers or pending answers
+                const hasServerAnswer = jawabanSiswa[question.id] ? true : false;
+                const hasPendingAnswer = pendingAnswers[question.id] && pendingAnswers[question.id].id_pilihan ?
+                    true : false;
+                const isAnswered = hasServerAnswer || hasPendingAnswer;
+                const isActive = displayIndex === currentQuestionIndex; // Current question is active
+
                 const questionNumber = displayIndex + 1; // Sequential numbering for display
 
                 minimapHTML += `
@@ -633,57 +934,130 @@
             const soalId = event.target.dataset.soalId;
             const pilihanId = event.target.dataset.pilihanId;
 
-            // Disable all radio buttons temporarily
-            document.querySelectorAll('input[type="radio"]').forEach(input => {
-                input.disabled = true;
+            // Add to pending answers for batch submission
+            pendingAnswers[soalId] = {
+                id_soal: soalId,
+                id_pilihan: pilihanId
+            };
+
+            // Update local state immediately for better UX
+            jawabanSiswa[soalId] = pilihanId;
+
+            // Update minimap - find the minimap element with matching soalId
+            document.querySelectorAll('.question-number').forEach((element) => {
+                const elementSoalId = element.getAttribute('data-soal-id');
+                if (elementSoalId == soalId) {
+                    element.classList.remove('unanswered');
+                    element.classList.add('answered');
+                }
             });
 
-            // Save answer via AJAX
-            fetch('{{ route('ujian.submitAnswer') }}', {
+            // Update progress bar based on answered questions
+            updateAnsweredProgress();
+
+            // Save to localStorage immediately for backup
+            saveAnswersToLocalStorage();
+
+            // Clear existing timer and set new one for batch submission
+            if (batchSubmissionTimer) {
+                clearTimeout(batchSubmissionTimer);
+            }
+
+            // Schedule batch submission after 3 seconds of inactivity
+            batchSubmissionTimer = setTimeout(() => {
+                submitBatchAnswers();
+            }, 3000);
+
+            // Try to submit immediately if connection is available
+            if (navigator.onLine) {
+                submitBatchAnswers();
+            } else {
+                showNotification('📵 Offline mode. Jawaban akan disimpan di local storage.', 'warning');
+            }
+        }
+
+        function submitBatchAnswers() {
+            if (Object.keys(pendingAnswers).length === 0) {
+                return;
+            }
+
+            const answersToSubmit = Object.values(pendingAnswers);
+
+            // Prepare batch submission data
+            fetch('{{ route('ujian.submitBatchAnswers') }}', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
                     },
                     body: JSON.stringify({
-                        id_soal: soalId,
-                        id_pilihan: pilihanId
+                        answers: answersToSubmit
                     })
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Update local state immediately
-                        jawabanSiswa[soalId] = pilihanId;
-
-                        // Update minimap - find the minimap element with matching soalId
-                        document.querySelectorAll('.question-number').forEach((element) => {
-                            const elementSoalId = element.getAttribute('data-soal-id');
-                            if (elementSoalId == soalId) {
-                                element.classList.remove('unanswered');
-                                element.classList.add('answered');
-                            }
-                        });
-
-                        // Update progress bar based on answered questions
-                        updateAnsweredProgress();
-
-                        // Success notification removed as requested
-                        // showNotification('✅ Jawaban berhasil disimpan', 'success');
+                        // Clear pending answers after successful submission
+                        pendingAnswers = {};
+                        // Save updated state to localStorage
+                        saveAnswersToLocalStorage();
+                        // console.log('✅ ' + data.message);
                     } else {
-                        showNotification('Gagal menyimpan jawaban', 'error');
+                        console.error('❌ Batch submission failed:', data.message);
+                        // Keep pending answers for retry
+                        showNotification('Gagal menyimpan beberapa jawaban', 'error');
+                        // Ensure answers are saved to localStorage even on failure
+                        saveAnswersToLocalStorage();
                     }
                 })
                 .catch(error => {
-                    console.error('Error saving answer:', error);
+                    console.error('❌ Error in batch submission:', error);
                     showNotification('Gagal menyimpan jawaban', 'error');
-                })
-                .finally(() => {
-                    // Re-enable all radio buttons
-                    document.querySelectorAll('input[type="radio"]').forEach(input => {
-                        input.disabled = false;
-                    });
                 });
+        }
+
+        function submitBatchAnswersImmediately() {
+            return new Promise((resolve, reject) => {
+                if (Object.keys(pendingAnswers).length === 0) {
+                    resolve();
+                    return;
+                }
+
+                const answersToSubmit = Object.values(pendingAnswers);
+
+                // Prepare batch submission data
+                fetch('{{ route('ujian.submitBatchAnswers') }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute(
+                                'content')
+                        },
+                        body: JSON.stringify({
+                            answers: answersToSubmit
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Clear pending answers after successful submission
+                            pendingAnswers = {};
+                            // Save updated state to localStorage
+                            saveAnswersToLocalStorage();
+                            // console.log('✅ ' + data.message);
+                            resolve();
+                        } else {
+                            console.error('❌ Batch submission failed:', data.message);
+                            // Save answers to localStorage even on failure
+                            saveAnswersToLocalStorage();
+                            reject(new Error(data.message));
+                        }
+                    })
+                    .catch(error => {
+                        console.error('❌ Error in immediate batch submission:', error);
+                        reject(error);
+                    });
+            });
         }
 
         function startTimer() {
@@ -732,7 +1106,7 @@
         }
 
         function autoSubmit() {
-            showNotification('⚠️ Waktu habis! Ujian akan disimpan otomatis.', 'warning');
+            showNotification('⚠️ Waktu habis! Menyimpan jawaban terakhir...', 'warning');
 
             // Disable all UI elements
             document.getElementById('prevBtn').disabled = true;
@@ -742,17 +1116,33 @@
                 input.disabled = true;
             });
 
-            // Submit via timeout endpoint (no result redirect)
-            fetch('{{ route('ujian.timeoutSubmit') }}', {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                    }
+            // Clear timers
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            if (batchSubmissionTimer) {
+                clearTimeout(batchSubmissionTimer);
+            }
+
+            // Submit any pending batch answers first
+            submitBatchAnswersImmediately().then(() => {
+                    showNotification('⚠️ Waktu habis! Ujian akan disimpan otomatis.', 'warning');
+
+                    // Then submit via timeout endpoint (no result redirect)
+                    return fetch('{{ route('ujian.timeoutSubmit') }}', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute(
+                                'content')
+                        }
+                    });
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         showNotification(data.message, 'success');
+                        // Clear localStorage before redirect
+                        clearAnswersFromLocalStorage();
                         setTimeout(() => {
                             window.location.href = data.redirect;
                         }, 2000);
@@ -775,23 +1165,37 @@
                 input.disabled = true;
             });
 
-            // Clear timer
+            // Clear timer and batch submission timer
             if (timerInterval) {
                 clearInterval(timerInterval);
             }
+            if (batchSubmissionTimer) {
+                clearTimeout(batchSubmissionTimer);
+            }
 
-            showNotification('🔄 Sedang menyimpan ujian...', 'info');
+            showNotification('🔄 Sedang menyimpan jawaban terakhir...', 'info');
 
-            fetch('{{ route('ujian.finish') }}', {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                    }
+            // Submit any pending batch answers first
+            submitBatchAnswersImmediately().then(() => {
+                    showNotification('🔄 Sedang menyelesaikan ujian...', 'info');
+
+                    // Then submit the exam
+                    return fetch('{{ route('ujian.finish') }}', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute(
+                                'content')
+                        }
+                    });
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        showNotification('✅ Ujian berhasil diselesaikan! Mengarahkan ke halaman ujian...', 'success');
+                        const message = data.scoring_queued ?
+                            '✅ Ujian berhasil diselesaikan! Nilai sedang diproses.' :
+                            '✅ Ujian berhasil diselesaikan! Mengarahkan ke halaman ujian...';
+
+                        showNotification(message, 'success');
 
                         // Hide the finish button and show completion message
                         const finishBtn = document.getElementById('finishBtn');
@@ -799,6 +1203,9 @@
                         finishBtn.classList.remove('finish-btn');
                         finishBtn.classList.add('btn', 'btn-success');
                         finishBtn.disabled = true;
+
+                        // Clear localStorage before redirect
+                        clearAnswersFromLocalStorage();
 
                         // Redirect to exam list after showing success message
                         setTimeout(() => {

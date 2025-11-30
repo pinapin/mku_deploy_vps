@@ -11,6 +11,7 @@ use App\Models\Mahasiswa;
 use App\Models\PKS;
 use App\Models\ProgramStudi;
 use App\Models\SertifikatKwu;
+use App\Models\SesiUjian;
 use App\Models\SettingSuratPengantar;
 use App\Models\SuratPengantar;
 use App\Models\SuratPengantarMahasiswa;
@@ -45,6 +46,7 @@ class ActivityLogServiceProvider extends ServiceProvider
         PKS::observe(ModelObserver::class);
         ProgramStudi::observe(ModelObserver::class);
         SertifikatKwu::observe(ModelObserver::class);
+        SesiUjian::observe(ModelObserver::class);
         SettingSuratPengantar::observe(ModelObserver::class);
         SuratPengantar::observe(ModelObserver::class);
         SuratPengantarMahasiswa::observe(ModelObserver::class);
