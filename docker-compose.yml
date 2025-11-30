@@ -34,11 +34,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 3G
+          cpus: '4'
+          memory: 4G
         reservations:
-          cpus: '1'
-          memory: 2G
+          cpus: '2'
+          memory: 3G
     volumes:
       - ./:/var/www/html
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini

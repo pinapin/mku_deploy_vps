@@ -31,7 +31,7 @@ class UjianController extends Controller
     {
         $cacheKey = "ujian_questions_{$ujianId}";
 
-        return Cache::remember($cacheKey, now()->addHours(2), function () use ($ujianId) {
+        return Cache::remember($cacheKey, now()->addHours(6), function () use ($ujianId) {
             return Soal::with(['pilihan' => function ($query) {
                 $query->orderBy('huruf_pilihan');
             }])
@@ -149,11 +149,11 @@ class UjianController extends Controller
             $ujian->setRelation('soal', $questions);
         });
 
-        // Get user's exam sessions
+        // Pre-load user's exam sessions
         $userExamSessions = SesiUjian::where('nim', $nim)
-            ->with('ujian')
+            ->with(['ujian'])
             ->get()
-            ->keyBy('id_ujian'); // Key by exam ID for easy lookup
+            ->keyBy('id_ujian');
 
         // Process each exam to determine status
         $ujians = $allUjians->map(function ($ujian) use ($userExamSessions) {
