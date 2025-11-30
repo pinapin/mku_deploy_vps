@@ -57,10 +57,14 @@ COPY --chown=laravel:laravel . /var/www/html
 # Install composer dependencies
 RUN composer install --optimize-autoloader --no-dev --no-interaction
 
+# Create storage link before switching user
+RUN php artisan storage:link || true
+
 # Set permissions - CRITICAL for Laravel
 RUN chown -R laravel:laravel /var/www/html \
     && chmod -R 775 /var/www/html/storage \
     && chmod -R 775 /var/www/html/bootstrap/cache \
+    && chmod -R 775 /var/www/html/public/storage \
     && find /var/www/html/storage -type d -exec chmod 775 {} \; \
     && find /var/www/html/storage -type f -exec chmod 664 {} \; \
     && find /var/www/html/bootstrap/cache -type d -exec chmod 775 {} \; \
