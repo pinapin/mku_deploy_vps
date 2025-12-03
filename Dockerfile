@@ -52,7 +52,7 @@ RUN addgroup -g ${GROUP_ID} laravel \
     && adduser -D -u ${USER_ID} -G laravel laravel
 
 # Copy application files
-COPY --chown=laravel:laravel . /var/www/html
+COPY --chown=${USER_ID}:${GROUP_ID} . /var/www/html
 
 # Install composer dependencies
 RUN composer install --optimize-autoloader --no-dev --no-interaction
@@ -61,7 +61,7 @@ RUN composer install --optimize-autoloader --no-dev --no-interaction
 RUN php artisan storage:link || true
 
 # Set permissions - CRITICAL for Laravel
-RUN chown -R laravel:laravel /var/www/html \
+RUN chown -R ${USER_ID}:${GROUP_ID} /var/www/html \
     && chmod -R 775 /var/www/html/storage \
     && chmod -R 775 /var/www/html/bootstrap/cache \
     && chmod -R 775 /var/www/html/public/storage \
@@ -71,7 +71,7 @@ RUN chown -R laravel:laravel /var/www/html \
     && find /var/www/html/bootstrap/cache -type f -exec chmod 664 {} \;
 
 # Switch to non-root user
-USER laravel
+USER ${USER_ID}:${GROUP_ID}
 
 # Expose port
 EXPOSE 9000
